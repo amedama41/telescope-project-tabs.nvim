@@ -3,6 +3,6 @@ return require("telescope").register_extension {
         require("telescope-project-tabs").setup(ext_config)
     end,
     exports = {
-        project_tab = require("telescope-project-tabs").project_tab,
+        switch_project = require("telescope-project-tabs").switch_project,
     },
 }
