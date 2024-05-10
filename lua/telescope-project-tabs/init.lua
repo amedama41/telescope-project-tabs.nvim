@@ -42,7 +42,9 @@ local function delete_all_buffers(project_dir)
         return vim.startswith(bufname, project_dir)
     end, vim.api.nvim_list_bufs())
     for _, bufnr in pairs(bufnr_list) do
-        vim.api.nvim_buf_delete(bufnr, { force = false, unload = false })
+        if vim.api.nvim_buf_is_valid(bufnr) then
+            vim.api.nvim_buf_delete(bufnr, { force = false, unload = false })
+        end
     end
 end
 
@@ -56,7 +58,9 @@ local function close_project_tab(entry)
         end, vim.api.nvim_list_tabpages())
         for _, tabpage in pairs(project_tabpage_list) do
             for _, winid in pairs(vim.api.nvim_tabpage_list_wins(tabpage)) do
-                vim.api.nvim_win_close(winid, false)
+                if vim.api.nvim_win_is_valid(winid) then
+                    vim.api.nvim_win_close(winid, false)
+                end
             end
         end
     end)
