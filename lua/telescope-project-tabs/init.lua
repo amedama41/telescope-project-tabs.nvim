@@ -52,6 +52,7 @@ end
 local function close_project_tab(entry)
   local project_dir = entry.value
   vim.schedule(function()
+    local current_tabpage = vim.api.nvim_get_current_tabpage()
     delete_all_buffers(project_dir)
     local project_tabpage_list = vim.tbl_filter(function(tabpage)
       return vim.fn.getcwd(1, vim.api.nvim_tabpage_get_number(tabpage))
@@ -63,6 +64,9 @@ local function close_project_tab(entry)
           vim.api.nvim_win_close(winid, false)
         end
       end
+    end
+    if vim.api.nvim_tabpage_is_valid(current_tabpage) then
+      vim.api.nvim_set_current_tabpage(current_tabpage)
     end
   end)
 end
