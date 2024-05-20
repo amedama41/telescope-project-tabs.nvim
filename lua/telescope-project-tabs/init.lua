@@ -154,8 +154,8 @@ M.switch_project = function(opts)
           local picker = action_state.get_current_picker(prompt_bufnr)
           for _, selection in pairs(picker:get_multi_selection()) do
             close_project_tab(selection)
-            actions.close(prompt_bufnr)
           end
+          actions.close(prompt_bufnr)
         end)
         return true
       end,
