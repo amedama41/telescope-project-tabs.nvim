@@ -73,15 +73,21 @@ end
 
 local M = {}
 
+---@class Markers
+---@field directories string[]
+---@field files string[]
+
 ---@class Configs
 ---@field root_dirs string[]
 ---@field max_depth number
+---@field markers Markers
 ---@field default_files string[]
 
 ---@type Configs
 M.default_configs = {
   root_dirs = {},
   max_depth = 1,
+  markers = { directories = { ".git" }, files = {} },
   default_files = { "README.md", "README.rst" },
 }
 
@@ -93,7 +99,7 @@ M.setup = function(configs)
   M.configs = vim.tbl_deep_extend("force", M.configs, configs)
 end
 
----@param opts { root_dirs: string[]?, max_depth: number?, default_files: string[]?, only_opened: boolean? }
+---@param opts { root_dirs: string[]?, max_depth: number?, markers: Markers?, default_files: string[]?, only_opened: boolean? }
 M.switch_project = function(opts)
   local configs = M.configs
   opts = opts or {}
@@ -102,23 +108,59 @@ M.switch_project = function(opts)
     return
   end
   local max_depth = opts.max_depth or configs.max_depth
+  local markers = opts.markers or configs.markers
+  if #markers.directories == 0 and #markers.files == 0 then
+    return
+  end
   local default_files = opts.default_files or configs.default_files
   local only_opened = opts.only_opened
   local opened_project_dirs = get_opened_project_dirs()
-  vim.print(opened_project_dirs)
 
   local cmd = { "find" }
   vim.list_extend(cmd, vim.tbl_map(vim.fn.expand, root_dirs))
-  vim.list_extend(
-    cmd,
-    { "-type", "d", "-name", ".git", "-maxdepth", max_depth }
-  )
+  if #markers.directories > 0 then
+    vim.list_extend(cmd, { "(", "-type", "d", "-and", "(", "-false" })
+    vim.list_extend(
+      cmd,
+      vim
+        .iter(markers.directories)
+        :map(function(dir)
+          return { "-or", "-name", dir }
+        end, markers.directories)
+        :flatten()
+        :totable()
+    )
+    vim.list_extend(cmd, { ")", ")" })
+  end
+  if #markers.files > 0 then
+    if #markers.directories > 0 then
+      vim.list_extend(cmd, { "-or" })
+    end
+    vim.list_extend(cmd, { "(", "-type", "f", "-and", "(", "-false" })
+    vim.list_extend(
+      cmd,
+      vim
+        .iter(markers.files)
+        :map(function(file)
+          return { "-or", "-name", file }
+        end, markers.files)
+        :flatten()
+        :totable()
+    )
+    vim.list_extend(cmd, { ")", ")" })
+  end
+  vim.list_extend(cmd, { "-maxdepth", max_depth })
 
   opts = vim.deepcopy(opts)
   local entry_maker = opts.entry_maker or make_entry.gen_from_string(opts)
-  ---@param git_dirpath string
-  local wrapping_entry_maker = function(git_dirpath)
-    local project_dir = vim.fn.fnamemodify(git_dirpath, ":h:p")
+  local duplicated = {}
+  ---@param marker_path string
+  local wrapping_entry_maker = function(marker_path)
+    local project_dir = vim.fn.fnamemodify(marker_path, ":h:p")
+    if duplicated[project_dir] then
+      return nil
+    end
+
     if
       only_opened and not vim.tbl_contains(opened_project_dirs, project_dir)
     then
@@ -134,6 +176,7 @@ M.switch_project = function(opts)
         break
       end
     end
+    duplicated[project_dir] = true
     return entry
   end
   opts.entry_maker = wrapping_entry_maker
