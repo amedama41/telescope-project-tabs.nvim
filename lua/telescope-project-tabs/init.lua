@@ -56,7 +56,7 @@ local function close_project_tab(entry)
     delete_all_buffers(project_dir)
     local project_tabpage_list = vim.tbl_filter(function(tabpage)
       return vim.fn.getcwd(1, vim.api.nvim_tabpage_get_number(tabpage))
-        == project_dir
+          == project_dir
     end, vim.api.nvim_list_tabpages())
     for _, tabpage in pairs(project_tabpage_list) do
       for _, winid in pairs(vim.api.nvim_tabpage_list_wins(tabpage)) do
@@ -116,57 +116,39 @@ M.switch_project = function(opts)
   local only_opened = opts.only_opened
   local opened_project_dirs = get_opened_project_dirs()
 
-  local cmd = { "find" }
-  vim.list_extend(cmd, vim.tbl_map(vim.fn.expand, root_dirs))
-  if #markers.directories > 0 then
-    vim.list_extend(cmd, { "(", "-type", "d", "-and", "(", "-false" })
-    vim.list_extend(
-      cmd,
-      vim
-        .iter(markers.directories)
-        :map(function(dir)
-          return { "-or", "-name", dir }
-        end, markers.directories)
-        :flatten()
-        :totable()
-    )
-    vim.list_extend(cmd, { ")", ")" })
-  end
-  if #markers.files > 0 then
-    if #markers.directories > 0 then
-      vim.list_extend(cmd, { "-or" })
+  local project_dirs = {}
+  local candidate_dirs = vim.iter(root_dirs):map(function(dir)
+    return { 1, vim.fs.normalize(dir) }
+  end):rev():totable()
+  while #candidate_dirs > 0 do
+    local candidate = table.remove(candidate_dirs)
+    local depth = candidate[1]
+    local dir = candidate[2]
+    for name, type in vim.fs.dir(dir) do
+      if type == "directory" then
+        if vim.list_contains(markers.directories, name) then
+          if not only_opened or vim.tbl_contains(opened_project_dirs, dir) then
+            project_dirs[#project_dirs + 1] = dir
+          end
+          break
+        elseif depth + 1 <= max_depth then
+          candidate_dirs[#candidate_dirs + 1] = { depth + 1, vim.fs.joinpath(dir, name) }
+        end
+      elseif type == "file" then
+        if vim.list_contains(markers.files, name) then
+          if not only_opened or vim.tbl_contains(opened_project_dirs, dir) then
+            project_dirs[#project_dirs + 1] = dir
+          end
+          break
+        end
+      end
     end
-    vim.list_extend(cmd, { "(", "-type", "f", "-and", "(", "-false" })
-    vim.list_extend(
-      cmd,
-      vim
-        .iter(markers.files)
-        :map(function(file)
-          return { "-or", "-name", file }
-        end, markers.files)
-        :flatten()
-        :totable()
-    )
-    vim.list_extend(cmd, { ")", ")" })
   end
-  vim.list_extend(cmd, { "-maxdepth", max_depth })
 
   opts = vim.deepcopy(opts)
   local entry_maker = opts.entry_maker or make_entry.gen_from_string(opts)
-  local duplicated = {}
-  ---@param marker_path string
-  local wrapping_entry_maker = function(marker_path)
-    local project_dir = vim.fn.fnamemodify(marker_path, ":h:p")
-    if duplicated[project_dir] then
-      return nil
-    end
-
-    if
-      only_opened and not vim.tbl_contains(opened_project_dirs, project_dir)
-    then
-      return nil
-    end
-
+  ---@param project_dir string
+  local wrapping_entry_maker = function(project_dir)
     local entry = entry_maker(project_dir)
     entry.path = project_dir
     for _, default_file in pairs(default_files) do
@@ -176,34 +158,35 @@ M.switch_project = function(opts)
         break
       end
     end
-    duplicated[project_dir] = true
     return entry
   end
   opts.entry_maker = wrapping_entry_maker
 
+  opts.results = project_dirs
+
   pickers
-    .new(opts, {
-      prompt_tile = "projects",
-      finder = finders.new_oneshot_job(cmd, opts),
-      sorter = conf.generic_sorter(opts),
-      previewer = conf.file_previewer(opts),
-      attach_mappings = function(prompt_bufnr, map)
-        actions.select_default:replace(function()
-          local selection = action_state.get_selected_entry()
-          switch_or_open_project_tab(selection)
-          actions.close(prompt_bufnr)
-        end)
-        map({ "n" }, "D", function()
-          local picker = action_state.get_current_picker(prompt_bufnr)
-          for _, selection in pairs(picker:get_multi_selection()) do
-            close_project_tab(selection)
-          end
-          actions.close(prompt_bufnr)
-        end)
-        return true
-      end,
-    })
-    :find()
+      .new(opts, {
+        prompt_tile = "projects",
+        finder = finders.new_table(opts),
+        sorter = conf.generic_sorter(opts),
+        previewer = conf.file_previewer(opts),
+        attach_mappings = function(prompt_bufnr, map)
+          actions.select_default:replace(function()
+            local selection = action_state.get_selected_entry()
+            switch_or_open_project_tab(selection)
+            actions.close(prompt_bufnr)
+          end)
+          map({ "n" }, "D", function()
+            local picker = action_state.get_current_picker(prompt_bufnr)
+            for _, selection in pairs(picker:get_multi_selection()) do
+              close_project_tab(selection)
+            end
+            actions.close(prompt_bufnr)
+          end)
+          return true
+        end,
+      })
+      :find()
 end
 
 return M
