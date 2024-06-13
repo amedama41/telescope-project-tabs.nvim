@@ -25,11 +25,68 @@ local function switch_or_open_project_tab(entry)
   end)
 end
 
+---@param root_dirs string[]
+---@param markers Markers
 ---@return string[]
-local function get_opened_project_dirs()
-  return vim.tbl_map(function(tabpage)
+local function get_opened_project_dirs(root_dirs, markers)
+  root_dirs = vim.iter(root_dirs):map(vim.fs.normalize):totable()
+  local duplicates = {}
+  return vim.iter(vim.api.nvim_list_tabpages()):map(function(tabpage)
     return vim.fn.getcwd(1, vim.api.nvim_tabpage_get_number(tabpage))
-  end, vim.api.nvim_list_tabpages())
+  end):filter(function(dir)
+    if duplicates[dir] == 1 then
+      return false
+    end
+    for _, root_dir in pairs(root_dirs) do
+      if vim.startswith(dir, root_dir) then
+        for _, marker_dir in pairs(markers.directories) do
+          if vim.fn.isdirectory(vim.fs.joinpath(dir, marker_dir)) == 1 then
+            duplicates[dir] = 1
+            return true
+          end
+        end
+        for _, marker_file in pairs(markers.files) do
+          if vim.fn.filereadable(vim.fs.joinpath(dir, marker_file)) == 1 then
+            duplicates[dir] = 1
+            return true
+          end
+        end
+      end
+    end
+    return false
+  end):totable()
+end
+
+---@param root_dirs string[]
+---@param markers Markers
+---@param max_depth number
+---@return string[]
+local function get_all_project_dirs(root_dirs, markers, max_depth)
+  local project_dirs = {}
+  local candidate_dirs = vim.iter(root_dirs):map(function(dir)
+    return { 1, vim.fs.normalize(dir) }
+  end):rev():totable()
+  while #candidate_dirs > 0 do
+    local candidate = table.remove(candidate_dirs)
+    local depth = candidate[1]
+    local dir = candidate[2]
+    for name, type in vim.fs.dir(dir) do
+      if type == "directory" then
+        if vim.list_contains(markers.directories, name) then
+          project_dirs[#project_dirs + 1] = dir
+          break
+        elseif depth + 1 <= max_depth then
+          candidate_dirs[#candidate_dirs + 1] = { depth + 1, vim.fs.joinpath(dir, name) }
+        end
+      elseif type == "file" then
+        if vim.list_contains(markers.files, name) then
+          project_dirs[#project_dirs + 1] = dir
+          break
+        end
+      end
+    end
+  end
+  return project_dirs
 end
 
 ---@param project_dir string
@@ -113,36 +170,11 @@ M.switch_project = function(opts)
     return
   end
   local default_files = opts.default_files or configs.default_files
-  local only_opened = opts.only_opened
-  local opened_project_dirs = get_opened_project_dirs()
-
-  local project_dirs = {}
-  local candidate_dirs = vim.iter(root_dirs):map(function(dir)
-    return { 1, vim.fs.normalize(dir) }
-  end):rev():totable()
-  while #candidate_dirs > 0 do
-    local candidate = table.remove(candidate_dirs)
-    local depth = candidate[1]
-    local dir = candidate[2]
-    for name, type in vim.fs.dir(dir) do
-      if type == "directory" then
-        if vim.list_contains(markers.directories, name) then
-          if not only_opened or vim.tbl_contains(opened_project_dirs, dir) then
-            project_dirs[#project_dirs + 1] = dir
-          end
-          break
-        elseif depth + 1 <= max_depth then
-          candidate_dirs[#candidate_dirs + 1] = { depth + 1, vim.fs.joinpath(dir, name) }
-        end
-      elseif type == "file" then
-        if vim.list_contains(markers.files, name) then
-          if not only_opened or vim.tbl_contains(opened_project_dirs, dir) then
-            project_dirs[#project_dirs + 1] = dir
-          end
-          break
-        end
-      end
-    end
+  local project_dirs
+  if opts.only_opened then
+    project_dirs = get_opened_project_dirs(root_dirs, markers)
+  else
+    project_dirs = get_all_project_dirs(root_dirs, markers, max_depth)
   end
 
   opts = vim.deepcopy(opts)
